@@ -94,21 +94,25 @@ for comp, dev in deviation.items():
 
 st.markdown("---")
 
-# ------------------------------------------------------------
+## ------------------------------------------------------------
 # 5. Scatter Plot — PCA Space
 # ------------------------------------------------------------
 
+import plotly.express as px
+
 st.header("📊 PCA Scatter — First 2 Components")
 
-fig, ax = plt.subplots(figsize=(6,5))
-ax.scatter(df_pca[pca_cols[0]], df_pca[pca_cols[1]])
-ax.set_xlabel(pca_cols[0])
-ax.set_ylabel(pca_cols[1])
-ax.set_title("PCA Scatter Plot")
+fig = px.scatter(
+    df_pca,
+    x=pca_cols[0],
+    y=pca_cols[1],
+    color="cluster" if "cluster" in df_pca.columns else None,
+    hover_data=df_pca.columns,
+    title="PCA Scatter Plot"
+)
 
-st.pyplot(fig)
+st.plotly_chart(fig, use_container_width=True)
 
-st.markdown("---")
 
 # ------------------------------------------------------------
 # 6. Summary
