@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import py7zr
 import os
-import matplotlib.pyplot as plt
+
 
 st.set_page_config(page_title="📊 Model Monitoring", layout="wide")
 st.title("📊 Model Monitoring Dashboard")
@@ -126,3 +126,4 @@ st.write("""
 - PCA centroid calculated
 - PCA scatter plot generated
 """)
+
