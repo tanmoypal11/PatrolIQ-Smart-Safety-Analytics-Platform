@@ -1,8 +1,4 @@
-# ======================================================
 # 2_Temporal_Patterns.py
-# Fully Streamlit Cloud Safe (no pickle, no mlflow)
-# ======================================================
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -10,61 +6,65 @@ import os
 import plotly.express as px
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-from sklearn.compose import ColumnTransformer
 
-# ------------------------------------------------------
-# Streamlit Config
-# ------------------------------------------------------
 st.set_page_config(page_title="Temporal Crime Patterns", layout="wide")
 
 st.title("⏰ Temporal Crime Patterns & Clusters")
 st.markdown("""
 This page visualizes **temporal crime patterns** using:
 - Hourly & Monthly trends  
-- Fresh on-the-fly KMeans clustering  
+- On-the-fly KMeans temporal clustering  
 """)
 
-# ------------------------------------------------------
-# PATHS
-# ------------------------------------------------------
-ROOT_DIR = os.path.dirname(os.path.dirname(__file__))      # project root
+# -------------------------------
+# Paths
+# -------------------------------
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))    # project root
 DATA_PATH = os.path.join(ROOT_DIR, "data", "PatrolIQ_temp_only.csv")
 
-# ------------------------------------------------------
+# -------------------------------
 # Load Data
-# ------------------------------------------------------
+# -------------------------------
 @st.cache_data
-def load_data():
-    df = pd.read_csv(DATA_PATH)
+def load_data(path):
+    df = pd.read_csv(path)
+    # drop rows missing core temporal columns
     df = df.dropna(subset=["Hour", "Month", "crime_severity_score"])
     return df
 
-df = load_data()
+df = load_data(DATA_PATH)
 
-# ------------------------------------------------------
-# dialga() – TEMPORAL FEATURE ENGINEERING
-# ------------------------------------------------------
-def dialga(df_feature_engineered):
-    """
-    Created inside Streamlit (safe).
-    Performs numeric temporal scaling.
-    """
-    temp_num_cols = ['Hour', 'Month', 'Day']
+# -------------------------------
+# Ensure MonthName exists (create from Month if missing)
+# -------------------------------
+# mapping numeric month -> month name
+MONTH_ORDER = [
+    "January","February","March","April","May","June",
+    "July","August","September","October","November","December"
+]
 
-    preprocessor = ColumnTransformer([
-        ('num', StandardScaler(), temp_num_cols)
-    ], remainder='drop')
+def ensure_monthname(df):
+    if "MonthName" not in df.columns or df["MonthName"].isnull().all():
+        # try to create MonthName from numeric Month column
+        def num_to_name(m):
+            try:
+                m_int = int(m)
+                if 1 <= m_int <= 12:
+                    return MONTH_ORDER[m_int - 1]
+            except Exception:
+                return np.nan
+            return np.nan
 
-    X_temp = preprocessor.fit_transform(df_feature_engineered)
+        df["MonthName"] = df["Month"].apply(num_to_name)
+    return df
 
-    return X_temp, preprocessor
+df = ensure_monthname(df)
 
-
-# ------------------------------------------------------
+# -------------------------------
 # Sidebar Filters
-# ------------------------------------------------------
+# -------------------------------
 st.sidebar.header("🔎 Filters")
-crime_options = sorted(df["Primary Type"].unique())
+crime_options = sorted(df["Primary Type"].dropna().unique())
 crime_filter = st.sidebar.multiselect("Filter by Crime Type", crime_options, default=[])
 
 if crime_filter:
@@ -72,80 +72,87 @@ if crime_filter:
 else:
     df_filtered = df.copy()
 
-# ------------------------------------------------------
+# reset index for safe indexing
+df_filtered = df_filtered.reset_index(drop=True)
+
+# -------------------------------
 # TEMPORAL CLUSTERING
-# ------------------------------------------------------
-# Prepare features using dialga()
-X_temp_filtered, _ = dialga(df_filtered)
+# -------------------------------
+# Use only the available temporal features: Hour, Month, crime_severity_score
+temp_cols = [c for c in ["Hour", "Month", "crime_severity_score"] if c in df_filtered.columns]
+if len(df_filtered) == 0 or len(temp_cols) == 0:
+    st.error("No data available after filtering or required temporal columns missing.")
+else:
+    # prepare features (ensure numeric)
+    X_temp = df_filtered[temp_cols].copy()
+    X_temp = X_temp.apply(pd.to_numeric, errors="coerce")
+    X_temp = X_temp.dropna()
 
-X_temp_df = pd.DataFrame(
-    X_temp_filtered,
-    index=df_filtered.index,
-    columns=["Hour_scaled", "Month_scaled", "Day_scaled"]
-).dropna()
+    # align df_filtered with X_temp rows
+    df_filtered = df_filtered.loc[X_temp.index].reset_index(drop=True)
+    X_temp = X_temp.reset_index(drop=True)
 
-df_filtered = df_filtered.loc[X_temp_df.index]
+    # Scale features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_temp)
 
-# TRAIN KMEANS (fresh)
-kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
-df_filtered["temp_cluster"] = kmeans.fit_predict(X_temp_df)
+    # choose number of clusters dynamically (avoid n_clusters > n_samples)
+    n_samples = X_scaled.shape[0]
+    n_clusters = min(3, max(1, n_samples))  # at least 1 cluster, up to 3
+    if n_clusters == 1:
+        # trivial cluster assignment
+        df_filtered["temp_cluster"] = 0
+    else:
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        df_filtered["temp_cluster"] = kmeans.fit_predict(X_scaled)
 
-# ------------------------------------------------------
-# Hourly Crime Plot
-# ------------------------------------------------------
-st.subheader("📊 Hourly Crime Frequency")
-hourly_counts = df_filtered.groupby("Hour").size().reset_index(name="Count")
+    # -------------------------------
+    # Hourly Crime Pattern
+    # -------------------------------
+    st.subheader("📊 Hourly Crime Frequency")
+    # Ensure Hour is numeric for ordering
+    df_filtered["Hour"] = pd.to_numeric(df_filtered["Hour"], errors="coerce")
+    hourly_counts = df_filtered.groupby("Hour").size().reset_index(name="Count").sort_values("Hour")
+    fig_hour = px.bar(hourly_counts, x="Hour", y="Count", text="Count",
+                      labels={"Count": "Crime Count", "Hour": "Hour of Day"})
+    st.plotly_chart(fig_hour, use_container_width=True)
 
-fig_hour = px.bar(
-    hourly_counts,
-    x="Hour",
-    y="Count",
-    text="Count",
-    labels={"Count": "Crime Count", "Hour": "Hour of Day"}
-)
-st.plotly_chart(fig_hour, use_container_width=True)
+    # -------------------------------
+    # Monthly Crime Pattern
+    # -------------------------------
+    st.subheader("📊 Monthly Crime Frequency")
+    # Prepare monthly counts with full month order and zero-fill missing months
+    monthly_series = df_filtered.groupby("MonthName").size()
+    monthly_counts = monthly_series.reindex(MONTH_ORDER).fillna(0).reset_index(name="Count").rename(columns={"index":"MonthName"})
+    # Convert Count to int for display
+    monthly_counts["Count"] = monthly_counts["Count"].astype(int)
 
-# ------------------------------------------------------
-# Monthly Crime Plot
-# ------------------------------------------------------
-st.subheader("📊 Monthly Crime Frequency")
+    fig_month = px.bar(
+        monthly_counts,
+        x="MonthName",
+        y="Count",
+        text="Count",
+        labels={"Count": "Crime Count", "MonthName": "Month"}
+    )
+    fig_month.update_xaxes(categoryorder="array", categoryarray=MONTH_ORDER)
+    st.plotly_chart(fig_month, use_container_width=True)
 
-month_order = [
-    "January","February","March","April","May","June",
-    "July","August","September","October","November","December"
-]
+    # -------------------------------
+    # Cluster Distribution Stats
+    # -------------------------------
+    st.subheader("📊 Temporal Cluster Distribution")
+    cluster_counts = df_filtered["temp_cluster"].value_counts().sort_index()
+    st.bar_chart(cluster_counts)
 
-monthly_counts = (
-    df_filtered.groupby("MonthName")
-    .size()
-    .reindex(month_order)
-    .reset_index(name="Count")
-)
+    # -------------------------------
+    # Interpretation
+    # -------------------------------
+    st.markdown("### ✔ Interpretation")
+    st.markdown("""
+    - Clusters capture common temporal behaviors (hour/month/severity).  
+    - Use cluster distribution and hourly/monthly charts to identify peak hours and seasonal trends.  
+    """)
 
-fig_month = px.bar(
-    monthly_counts,
-    x="MonthName",
-    y="Count",
-    text="Count",
-    labels={"Count": "Crime Count", "MonthName": "Month"}
-)
-st.plotly_chart(fig_month, use_container_width=True)
-
-# ------------------------------------------------------
-# Cluster Distribution
-# ------------------------------------------------------
-st.subheader("📊 Temporal Cluster Distribution")
-cluster_counts = df_filtered["temp_cluster"].value_counts().sort_index()
-st.bar_chart(cluster_counts)
-
-# ------------------------------------------------------
-# Interpretation
-# ------------------------------------------------------
-st.markdown("### ✔ Interpretation")
-st.markdown("""
-- These clusters show **patterns in time** (hour/month/day).  
-- Helps identify:
-  - **Peak crime hours**
-  - **Seasonal patterns**
-  - **High-severity time windows**  
-""")
+# optional: show a small sample table for verification
+with st.expander("Show sample rows"):
+    st.write(df_filtered.head(10))
