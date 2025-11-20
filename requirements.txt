@@ -7,4 +7,6 @@ scikit-learn
 plotly
 umap-learn
 cloudpickle
+py7zr
+
 
