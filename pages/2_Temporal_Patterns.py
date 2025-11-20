@@ -2,42 +2,36 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pickle
 import cloudpickle
 import os
 import plotly.express as px
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 
 st.set_page_config(page_title="Temporal Crime Patterns", layout="wide")
 
 st.title("⏰ Temporal Crime Patterns & Clusters")
 st.markdown("""
 This page visualizes **temporal crime patterns in Chicago** using:
-- Hourly & Monthly trends
-- K-Means temporal clusters
+- Hourly & Monthly trends  
+- K-Means temporal clusters  
 """)
 
 # -------------------------------
 # Paths
 # -------------------------------
-ROOT_DIR = os.path.dirname(os.path.dirname(__file__))  # Go up one level from pages/
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))    # project root
 DATA_PATH = os.path.join(ROOT_DIR, "data", "PatrolIQ_temp_only.csv")
-MODEL_PATH = os.path.join(ROOT_DIR, "models", "kmeans_temp_model.pkl")
 DIALGA_PATH = os.path.join(ROOT_DIR, "models", "dialga_function_2.pkl")
 
 # -------------------------------
-# Load Data & Models
+# Load Data & Functions
 # -------------------------------
 @st.cache_data
 def load_data():
     df = pd.read_csv(DATA_PATH)
-    # Ensure no missing coordinates/time info
     df = df.dropna(subset=["Hour", "Month", "crime_severity_score"])
     return df
-
-@st.cache_resource
-def load_model(path):
-    with open(path, "rb") as f:
-        return pickle.load(f)
 
 @st.cache_resource
 def load_dialga(path):
@@ -45,7 +39,6 @@ def load_dialga(path):
         return cloudpickle.load(f)
 
 df = load_data()
-temp_kmeans = load_model(MODEL_PATH)
 dialga = load_dialga(DIALGA_PATH)
 
 # -------------------------------
@@ -61,21 +54,26 @@ else:
     df_filtered = df.copy()
 
 # -------------------------------
-# Temporal Clustering
+# TEMPORAL CLUSTERING (NO PICKLE)
 # -------------------------------
 # Generate scaled temporal features using dialga()
 X_temp_filtered, _ = dialga(df_filtered)
 
-# Convert to DataFrame to align with original indices
-X_temp_df = pd.DataFrame(X_temp_filtered, index=df_filtered.index, columns=['Hour', 'Month', 'crime_severity_score'])
+X_temp_df = pd.DataFrame(
+    X_temp_filtered,
+    index=df_filtered.index,
+    columns=["Hour", "Month", "crime_severity_score"]
+).dropna()
 
-# Drop rows with NaNs
-X_temp_df = X_temp_df.dropna()
 df_filtered = df_filtered.loc[X_temp_df.index]
 
-# Predict temporal clusters
-df_filtered["temp_cluster"] = temp_kmeans.predict(X_temp_df.values)
+# Scale freshly
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X_temp_df)
 
+# Train fresh KMeans (safe on Streamlit Cloud)
+kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+df_filtered["temp_cluster"] = kmeans.fit_predict(X_scaled)
 
 # -------------------------------
 # Hourly Crime Pattern
@@ -94,6 +92,7 @@ monthly_counts = df_filtered.groupby("MonthName").size().reindex([
     "January","February","March","April","May","June",
     "July","August","September","October","November","December"
 ]).reset_index(name="Count")
+
 fig_month = px.bar(monthly_counts, x="MonthName", y="Count", text="Count",
                    labels={"Count": "Crime Count", "MonthName": "Month"})
 st.plotly_chart(fig_month, use_container_width=True)
@@ -105,8 +104,9 @@ st.subheader("📊 Temporal Cluster Distribution")
 cluster_counts = df_filtered["temp_cluster"].value_counts().sort_index()
 st.bar_chart(cluster_counts)
 
+# Interpretation
 st.markdown("### ✔ Interpretation")
 st.markdown("""
-- Clusters group crimes based on **time patterns** (hour, month, severity)  
-- Helps identify **peak crime hours** and **seasonal trends**  
+- Clusters show crime behaviors across **time**.  
+- Helps find **peak hours**, **high-severity time windows**, and **seasonal crime surges**.  
 """)
