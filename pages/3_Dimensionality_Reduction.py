@@ -1,113 +1,111 @@
+# pages/3_Dimensionality_Reduction.py
 import streamlit as st
 import pandas as pd
-import numpy as np
-import plotly.express as px
+import os
 
-# ------------------------------------------------------------
-# Page Title
-# ------------------------------------------------------------
-st.title("🧠 PCA & Dimensionality Reduction Dashboard")
+st.set_page_config(page_title="PCA & KMeans Evaluation", layout="wide")
+st.title("📉 PCA Dimensionality Reduction & KMeans Evaluation")
 
-# ------------------------------------------------------------
-# Load Data
-# ------------------------------------------------------------
-@st.cache_data
-def load_data():
-    df = pd.read_csv("data/pca_kmeans_results.csv")
-    return df
+# ---------------------------
+# Path (Streamlit Cloud safe)
+# ---------------------------
+ROOT_DIR = os.getcwd()   # reliable root on Streamlit Cloud
+DATA_PATH = os.path.join(ROOT_DIR, "data", "pca_kmeans_results.csv")
 
-df = load_data()
+st.info(f"Loading results from: `{DATA_PATH}`")
 
-st.success("PCA + KMeans data loaded successfully!")
+# Debug: show /data contents
+data_folder = os.path.join(ROOT_DIR, "data")
+if os.path.exists(data_folder):
+    st.write("Files in /data:", sorted(os.listdir(data_folder)))
+else:
+    st.error("Folder /data not found in repo root.")
+    st.stop()
 
-# ------------------------------------------------------------
-# PCA Summary Section
-# ------------------------------------------------------------
+# ---------------------------
+# Load CSV
+# ---------------------------
+try:
+    df = pd.read_csv(DATA_PATH)
+except Exception as e:
+    st.error("Could not load `pca_kmeans_results.csv` from /data.")
+    st.code(str(e))
+    st.stop()
+
+# ---------------------------
+# Validate expected columns
+# ---------------------------
+required_cols = {"n_components", "n_clusters", "silhouette_score", "davies_bouldin_score"}
+if not required_cols.issubset(df.columns):
+    st.error(f"CSV missing required columns. Found: {list(df.columns)}")
+    st.stop()
+
+# ---------------------------
+# Sort by silhouette_score DESC
+# ---------------------------
+df_sorted = df.sort_values(by="silhouette_score", ascending=False).reset_index(drop=True)
+
+st.subheader("📌 PCA + KMeans Evaluation (sorted by silhouette_score — best first)")
+st.dataframe(df_sorted, use_container_width=True, height=500)
+
+# ---------------------------
+# PCA Summary (static)
+# ---------------------------
+st.markdown("---")
 st.subheader("📘 PCA Dimensionality Summary")
-
-original_dim = 60
-reduced_dim = 8
-explained_variance = 0.7113016880762798
-
-st.markdown(f"""
-**Original dimensions:** `{original_dim}`  
-**Reduced dimensions (~80% variance):** `{reduced_dim}`  
-**Explained variance ratio:** `{explained_variance}`
+st.markdown("""
+**Original dimensions:** `60`  
+**Reduced dimensions (~80% variance):** `8`  
+**Explained variance ratio:** `0.7113016880762798`
 """)
 
-# ------------------------------------------------------------
-# Feature Importance Section
-# ------------------------------------------------------------
-st.markdown("---")
-st.subheader("🔥 Top Features Driving Principal Components")
-
-# ---- PC1 ----
-st.markdown("### 🟦 Top 5 Features — Principal Component 1")
-st.text("""
-num__Latitude                   0.39958762169188605
+# ---------------------------
+# Top Features — PC1
+# ---------------------------
+st.subheader("🔥 Top 5 Features — Principal Component 1")
+st.code("""num__Latitude                   0.39958762169188605
 num__Y Coordinate               0.3992414092615185
 num__District                   0.3927917259621543
 num__Beat                       0.3828689358748723
-num__X Coordinate               0.3359302670888766
+num__X Coordinate               0.3359302670888766""")
+
+st.markdown("""
+These features have the **highest influence on Principal Component 1 (PC1)**.  
+PC1 mainly captures **geographic variation** in crime:
+
+- **Latitude & Y Coordinate** → Capture north–south spatial shifts  
+- **District & Beat** → Administrative and policing boundaries  
+- **X Coordinate** → East–west spatial patterns  
+
+🔍 *Interpretation:*  
+PC1 represents **where crimes are happening** — geography-driven differentiation.
 """)
 
-# ---- PC2 ----
-st.markdown("### 🟩 Top 5 Features — Principal Component 2")
-st.text("""
-num__Arrest                     0.5090016518064672
+
+# ---------------------------
+# Top Features — PC2
+# ---------------------------
+st.subheader("🔥 Top 5 Features — Principal Component 2")
+st.code("""num__Arrest                     0.5090016518064672
 num__Year                       0.43838487558949324
 num__crime_severity_score       0.3830891066017058
 num__Second                     0.36608033148258384
-num__Minute                     0.2588086690855801
+num__Minute                     0.2588086690855801""")
+
+st.markdown("""
+These features contribute the most to **Principal Component 2 (PC2)**.  
+PC2 captures **temporal + behavioral crime characteristics**:
+
+- **Arrest** → Whether the case led to an arrest  
+- **Year** → Trend changes across years  
+- **Severity Score** → How serious the incident is  
+- **Second & Minute** → Micro-temporal patterns within each occurrence  
+
+🔍 *Interpretation:*  
+PC2 represents **how crimes behave over time** — severity, arrest likelihood, and fine-grained timing.
 """)
 
-# ------------------------------------------------------------
-# 2D PCA Visualization
-# ------------------------------------------------------------
+
+
 st.markdown("---")
-st.subheader("📊 PCA — 2D Component Projection")
-
-fig_pca = px.scatter(
-    df,
-    x="PC1",
-    y="PC2",
-    color="Cluster",
-    title="PCA 2D Projection with Cluster Coloring",
-    opacity=0.7,
-)
-st.plotly_chart(fig_pca, use_container_width=True)
-
-# ------------------------------------------------------------
-# t-SNE Visualization
-# ------------------------------------------------------------
-st.markdown("---")
-st.subheader("🌈 t-SNE Visualization")
-
-fig_tsne = px.scatter(
-    df,
-    x="TSNE1",
-    y="TSNE2",
-    color="Cluster",
-    title="t-SNE 2D Projection with Clusters",
-    opacity=0.7,
-)
-st.plotly_chart(fig_tsne, use_container_width=True)
-
-
-# ------------------------------------------------------------
-# Cluster Summary Table
-# ------------------------------------------------------------
-st.markdown("---")
-st.subheader("📑 Cluster Summary Statistics")
-
-cluster_summary = df.groupby("Cluster").agg({
-    "PC1": "mean",
-    "PC2": "mean",
-    "TSNE1": "mean",
-    "TSNE2": "mean",
-    "crime_severity_score": "mean"
-}).reset_index()
-
-st.dataframe(cluster_summary, use_container_width=True)
-
-# End of file
+st.success("Sorted results displayed successfully.")
