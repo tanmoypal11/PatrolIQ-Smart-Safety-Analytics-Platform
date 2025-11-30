@@ -9,7 +9,7 @@ st.set_page_config(page_title="📊 Model Monitoring", layout="wide")
 st.title("📊 Model Monitoring Dashboard")
 
 # ------------------------------------------------------------
-# 1. Setup and Data Loading
+## 1. Setup and Data Loading
 # ------------------------------------------------------------
 
 PCA_7Z_PATH = "data/PatrolIQ_dimred_pca.7z"
@@ -47,19 +47,17 @@ if df_pca is None:
     st.stop()
 
 # ------------------------------------------------------------
-# 2. Data Preparation and Splitting (Simulating Reference vs. Current)
+## 2. Data Preparation and Splitting (Simulating Reference vs. Current)
 # ------------------------------------------------------------
 
 # 🛑 CRITICAL STEP: Simulate time series split for drift check
 # Assuming your crime data has a 'Date' or 'Time' column.
-# If your data has a date column, replace 'date_col_name' with its name.
 if 'date' in df_pca.columns.str.lower():
     date_col = df_pca.columns[df_pca.columns.str.lower() == 'date'][0]
     df_pca[date_col] = pd.to_datetime(df_pca[date_col], errors='coerce')
     df_pca.dropna(subset=[date_col], inplace=True)
     
     # Use a date near the end of the dataset for a realistic split
-    # You will need to adjust this date based on your actual data range (e.g., 2024-01-01)
     SPLIT_DATE = df_pca[date_col].max() - pd.DateOffset(months=3)
 
     df_ref = df_pca[df_pca[date_col] < SPLIT_DATE]
@@ -74,8 +72,6 @@ else:
     df_ref = df_pca.iloc[:split_idx]
     df_current = df_pca.iloc[split_idx:]
     
-    # This scenario is less realistic for time-series drift but allows the dashboard to run.
-
 # Identify PCA columns
 possible_pca_names = ["PC1", "PC2", "pc1", "pc2", "pca1", "pca2"]
 pca_cols = sorted([c for c in df_pca.columns if c.lower() in possible_pca_names])
@@ -88,10 +84,10 @@ st.success("✓ PCA dataset loaded and split!")
 st.markdown("---")
 
 # ------------------------------------------------------------
-# 3. Reference Statistics (The "How to Calculate Drift" Baseline)
+## 3. Reference and Current Statistics
 # ------------------------------------------------------------
 
-st.header("📏 Reference Statistics (Training/Historical Data)")
+st.header("📏 Reference vs. Current PCA Statistics")
 
 # 1. Calculate Reference Statistics from the historical/training data (df_ref)
 reference_means = df_ref[pca_cols].mean()
@@ -110,15 +106,15 @@ st.dataframe(pd.DataFrame({
 st.markdown("---")
 
 # ------------------------------------------------------------
-# 4. ROBUST DRIFT CHECK: Mean and Volatility
+## 4. ROBUST DRIFT CHECK: Mean and Volatility
 # ------------------------------------------------------------
 
-st.header("📡 Drift Stability Check Results")
+st.header("📡 Robust Drift Stability Check Results")
 st.write("We compare the **Current** data statistics against the **Reference** data statistics.")
 
-# --- 4a. Mean Drift Check (Shift in Centroid) ---
+### 1. Centroid (Mean) Drift (Shift in Location)
 
-st.subheader("1. Centroid (Mean) Drift")
+st.subheader("1. Centroid (Mean) Drift (Absolute Shift)")
 # CALCULATE DRIFT: Absolute difference in means
 mean_drift = (current_means - reference_means).abs()
 st.dataframe(mean_drift.to_frame("Absolute Mean Drift"))
@@ -129,11 +125,18 @@ for comp, drift in mean_drift.items():
         st.error(f"⚠ **{comp}**: Significant Mean Shift detected ({drift:.4f}). **Data Centroid has moved!**")
     else:
         st.success(f"✓ **{comp}**: Mean Stable ({drift:.4f})")
+st.markdown(
+    """
+    *This measures **Concept Drift**—the entire data distribution has shifted in the PCA space. 
+    A shift means the **average state** of the underlying crime data has changed.*
+    """
+)
 
 
-# --- 4b. Volatility Drift Check (Shift in Spread/Variance) ---
 
-st.subheader("2. Volatility (Std Dev) Drift")
+### 2. Volatility (Std Dev) Drift (Shift in Spread)
+
+st.subheader("2. Volatility (Std Dev) Drift (Percentage Change)")
 # CALCULATE DRIFT: Percentage change in standard deviation
 # We use .replace(0, 1e-6) to avoid DivisionByZero errors, though STD should not be zero.
 std_drift_percent = ((current_std - reference_std) / reference_std.replace(0, 1e-6)) * 100
@@ -146,15 +149,22 @@ for comp, drift in std_drift_percent.items():
         st.error(f"⚠ **{comp}**: Volatility Drift detected ({drift:.2f}%). **Data Spread/Shape has changed!**")
     else:
         st.success(f"✓ **{comp}**: Volatility Stable ({drift:.2f}%)")
+st.markdown(
+    """
+    *This measures **Feature Variability Drift**—the data points are now either more or less spread out 
+    along the principal component axes than they were during training.*
+    """
+)
 
 
 st.markdown("---")
 
 # ------------------------------------------------------------
-# 5. Scatter Plot — PCA Space
+## 5. Scatter Plot — PCA Space
 # ------------------------------------------------------------
 
 st.header("📊 PCA Scatter — Reference vs. Current Data")
+st.markdown("Use this visualization to visually confirm Centroid and Volatility shifts.")
 
 # Combine dataframes for plotting with a label
 df_plot = pd.concat([
