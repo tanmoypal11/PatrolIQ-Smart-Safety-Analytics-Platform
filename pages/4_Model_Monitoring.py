@@ -19,11 +19,19 @@ os.makedirs(EXTRACT_DIR, exist_ok=True)
 def extract_and_load_pca():
     """Extracts .7z and loads contained CSV."""
     # Simplified check to avoid re-extracting on every rerun
-    if not os.path.exists(os.path.join(EXTRACT_DIR, "pca_data.csv")):
-        with py7zr.SevenZipFile(PCA_7Z_PATH, mode='r') as z:
-            z.extractall(path=EXTRACT_DIR)
-        st.success("✓ Extracted PCA .7z successfully!")
+    # NOTE: This assumes a specific file name after extraction, adjust if necessary
+    target_csv = "pca_data.csv" # Placeholder for the actual extracted CSV name
+    
+    if not os.path.exists(os.path.join(EXTRACT_DIR, target_csv)):
+        try:
+            with py7zr.SevenZipFile(PCA_7Z_PATH, mode='r') as z:
+                z.extractall(path=EXTRACT_DIR)
+            st.success("✓ Extracted PCA .7z successfully!")
+        except FileNotFoundError:
+             st.error(f"⚠ PCA 7z file not found at: {PCA_7Z_PATH}. Cannot load data.")
+             return None
 
+    # Find and load the first CSV file found in the extracted directory
     for f in os.listdir(EXTRACT_DIR):
         if f.endswith(".csv"):
             return pd.read_csv(os.path.join(EXTRACT_DIR, f))
@@ -34,7 +42,7 @@ with st.spinner("Loading PCA reduced data..."):
     df_pca = extract_and_load_pca()
 
 if df_pca is None:
-    st.error("⚠ No CSV detected inside the .7z archive.")
+    st.error("⚠ No CSV detected inside the .7z archive or failed extraction.")
     st.stop()
 
 st.success("✓ PCA dataset loaded!")
@@ -46,7 +54,6 @@ st.markdown("---")
 # 2. Identify PCA column names and Centroid
 # ------------------------------------------------------------
 
-# Works for both: ["PC1", "PC2"] OR ["pca1", "pca2"]
 possible_pca_names = ["PC1", "PC2", "pc1", "pc2", "pca1", "pca2"]
 pca_cols = sorted([c for c in df_pca.columns if c.lower() in possible_pca_names])
 
@@ -57,36 +64,51 @@ if len(pca_cols) < 2:
 st.write("### 🔍 PCA Columns Detected")
 st.code(pca_cols)
 
-st.header("📌 PCA Component Means (Centroid)")
+st.header("📌 Current PCA Component Means (Centroid)")
 centroid = df_pca[pca_cols].mean()
 st.dataframe(centroid.to_frame("Current Mean Value"))
 
 st.markdown("---")
 
 # ------------------------------------------------------------
-# 3. ROBUST DRIFT CHECK: Mean and Volatility
+# 3. ROBUST DRIFT CHECK: Mean and Volatility (Without Assumed Values)
 # ------------------------------------------------------------
 
-st.header("📡 Robust Drift Stability Check")
+st.header("📡 Robust Drift Stability Check (Requires Reference Data)")
 
-# --- 3a. Define Reference Values (Must be loaded from your training phase) ---
-# NOTE: These are example values. In a real application, you would load these
-# from a file (e.g., JSON or CSV) saved during the model training phase.
+# --- 3a. Placeholder for Reference Values (CRITICAL STEP) ---
+# 🛑 IMPORTANT: You MUST load your reference statistics here.
+# These values (mean and std dev) are calculated ONLY on the training data.
 
-# Reference Mean should ideally be 0.0 for PCA
-reference_means = pd.Series(0.0, index=pca_cols)
+try:
+    # -------------------------------------------------------------------------
+    # 🚨 REPLACE THIS SECTION WITH YOUR ACTUAL DATA LOADING LOGIC
+    # Example: loading from a saved JSON file that contains the stats
+    # reference_stats = pd.read_json("path/to/pca_reference_stats.json")
+    # reference_means = reference_stats["mean"]
+    # reference_std = reference_stats["std"]
+    #
+    # For now, we use a structure that will cause the check to fail cleanly
+    # if not replaced, as we cannot assume values.
+    # -------------------------------------------------------------------------
+    
+    # Placeholder to force user to insert real values
+    raise NotImplementedError("Reference values must be loaded here.") 
 
-# Reference Standard Deviation (Std Dev is sqrt of the Eigenvalue)
-reference_std = pd.Series(
-    [1.5, 1.2], # Example: PC1 had an STD of 1.5, PC2 had an STD of 1.2 in training
-    index=pca_cols
-)
-st.write("Reference values assumed from training data:")
-st.dataframe(pd.DataFrame({
-    "Reference Mean": reference_means,
-    "Reference Std Dev": reference_std
-}))
+except NotImplementedError as e:
+    st.error("""
+    **🛑 ERROR: REFERENCE VALUES NOT LOADED 🛑**
+    
+    The drift check cannot run without the **Mean** and **Standard Deviation** of the 
+    PCA components calculated from your **original training/reference dataset**.
+    
+    **Action Required:** Please replace the placeholder code in section 3a to load:
+    1. `reference_means` (a Series keyed by PCA column names)
+    2. `reference_std` (a Series keyed by PCA column names)
+    """)
+    st.stop()
 
+# If the user replaces the placeholder logic above, the code execution will proceed below.
 
 # --- 3b. Mean Drift Check (Shift in Centroid) ---
 
@@ -105,9 +127,9 @@ for comp, drift in mean_drift.items():
 # --- 3c. Volatility Drift Check (Shift in Spread/Variance) ---
 
 st.subheader("2. Volatility (Std Dev) Drift")
-# Calculate the percentage change in standard deviation
 current_std = df_pca[pca_cols].std()
-std_drift_percent = ((current_std - reference_std) / reference_std) * 100
+# Ensure division is safe by checking for zero in reference_std (though unlikely for PCA std dev)
+std_drift_percent = ((current_std - reference_std) / reference_std.replace(0, 1e-6)) * 100
 
 st.dataframe(std_drift_percent.to_frame("Std Dev % Change"))
 
@@ -142,7 +164,7 @@ st.plotly_chart(fig, use_container_width=True)
 
 st.header("📝 Summary")
 st.write("""
-- The previous unstable **Deviation Ratio** (Std Dev / Mean) was removed because the PCA Mean is zero.
-- Two robust drift checks are implemented: **Centroid Shift** (Mean Drift) and **Data Spread Change** (Volatility Drift).
-- **Remember to replace the placeholder `reference_means` and `reference_std` with values saved from your actual training data!**
+- The original **unstable Deviation Ratio** (Std Dev / Mean) was removed.
+- Robust drift checks for **Centroid Shift** (Mean Drift) and **Data Spread Change** (Volatility Drift) are structured.
+- **Critical:** The code currently halts and instructs you to load the statistical constants (`reference_means`, `reference_std`) from your **training data** to enable the drift checks.
 """)
