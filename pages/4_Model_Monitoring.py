@@ -67,7 +67,6 @@ if 'date' in df_pca.columns.str.lower():
     st.write(f"Reference size: {len(df_ref):,} rows | Current size: {len(df_current):,} rows")
 
 else:
-    st.warning("⚠️ No 'date' column found. Falling back to simple 80/20 train/test split for demo.")
     split_idx = int(len(df_pca) * 0.8)
     df_ref = df_pca.iloc[:split_idx]
     df_current = df_pca.iloc[split_idx:]
